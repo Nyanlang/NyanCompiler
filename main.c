@@ -21,6 +21,7 @@ int main(int argc, char** argv) {
 	compile_nyan(nyan, assem);
 
 	FILE* f = fopen("nyan.s", "w");
+	printf("%s", assem->data);
 	fprintf(f, "%s", assem->data);
 	fclose(f);
 

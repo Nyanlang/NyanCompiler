@@ -1,0 +1,7 @@
+/home/minco/NyanCompiler/build/CMakeFiles/nyanc.dir
+/home/minco/NyanCompiler/build/CMakeFiles/edit_cache.dir
+/home/minco/NyanCompiler/build/CMakeFiles/rebuild_cache.dir
+/home/minco/NyanCompiler/build/CMakeFiles/list_install_components.dir
+/home/minco/NyanCompiler/build/CMakeFiles/install.dir
+/home/minco/NyanCompiler/build/CMakeFiles/install/local.dir
+/home/minco/NyanCompiler/build/CMakeFiles/install/strip.dir

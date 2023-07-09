@@ -69,24 +69,29 @@ int get_matching_y(struct mouse* mice, int len, int x) {
 	return -1;
 }
 
-int compile_raw_nyan(struct nyan_s nyan, Assembly* assem);
+int compile_raw_nyan(struct nyan_s nyan, Assembly* assem, char* name);
 
 int compile_nyan(struct nyan_s nyan, Assembly* assem) {
 	asm_init(assem);
 
 	asm_add(assem, "section .data");
 	asm_add(assem, "memory: times 0x100000 db 0");
+	asm_add(assem, "modules: times 0x100000 db 0");
 	asm_add(assem, "section .text");
 
 	// make modules as functions
 	for (int i = 0; i < nyan.mice_len; i++) {
 		struct mouse m = nyan.mice[i];
 		asm_addf(assem, "func_%d:", m.x);
+		asm_addf(assem, "add r8, %d", 0x1000 * (m.x + 1));
 		Assembly* assm_mouse = malloc(sizeof(Assembly));
 		asm_init(assm_mouse);
 		struct nyan_s nyan_mouse = parse_nyan(m.f);
-		compile_raw_nyan(nyan_mouse, assm_mouse);
+		char* funcname = malloc(sizeof(char) * 10);
+		sprintf(funcname, "func_%d", m.x);
+		compile_raw_nyan(nyan_mouse, assm_mouse, funcname);
 		asm_add(assem, assm_mouse->data);
+		asm_addf(assem, "sub r8, %d", 0x1000 * m.x);
 		free(assm_mouse);
 	}
 
@@ -94,8 +99,12 @@ int compile_nyan(struct nyan_s nyan, Assembly* assem) {
 	asm_add(assem, "_start:");
 	asm_add(assem, "mov r8, memory");
 	asm_add(assem, "mov rdx, _start");
+	for (int i = 0; i < nyan.mice_len; i++) {
+		struct mouse m = nyan.mice[i];
+		asm_addf(assem, "mov qword [modules+%d], func_%d", m.x, m.x);
+	}
 
-	compile_raw_nyan(nyan, assem);
+	compile_raw_nyan(nyan, assem, "main");
 	
 	asm_add(assem, "mov rax, 60");
 	asm_add(assem, "mov rdi, 0");
@@ -104,12 +113,10 @@ int compile_nyan(struct nyan_s nyan, Assembly* assem) {
 	return 0;
 }
 
-int compile_raw_nyan(struct nyan_s nyan, Assembly* assem) {
+int compile_raw_nyan(struct nyan_s nyan, Assembly* assem, char* name) {
 	asm_add(assem, "push r8");
 	asm_add(assem, "push r9");
-
-	int ptr = 0; // pointer
-	int mptr = 0; // module pointer
+	asm_add(assem, "mov r9, 0");
 
 	struct jump_pair *jump_pairs = malloc(sizeof(struct jump_pair) * nyan.len);
 	int jplen = 0;
@@ -119,21 +126,16 @@ int compile_raw_nyan(struct nyan_s nyan, Assembly* assem) {
 	for (int i = 0; i < nyan.len; i++) {
 		switch (nyan.commands[i]) {
 			case POINTER_ADD:
-				ptr++;
+				asm_add(assem, "inc r8");
 			break;
 			case POINTER_SUB:
-				ptr--;
+				asm_add(assem, "dec r8");
 			break;
 			case VALUE_ADD:
-				asm_addf(assem, "mov r9, r8");
-				asm_addf(assem, "add r9, %d", ptr);
-				asm_add(assem, "inc byte [r9]");
+				asm_add(assem, "inc qword [r8]");
 			break;
 			case VALUE_SUB:
-				// set r9 to r8 + ptr
-				asm_addf(assem, "mov r9, r8");
-				asm_addf(assem, "add r9, %d", ptr);
-				asm_add(assem, "dec byte [r9]");
+				asm_add(assem, "dec qword [r8]");
 			break;
 			case DEBUG_PRINT:
 			// TODO: print number
@@ -146,42 +148,38 @@ int compile_raw_nyan(struct nyan_s nyan, Assembly* assem) {
 			break;
 			case JUMP_ZERO: {
 				// jump point
-				asm_addf(assem, ".jz%d:", i);
-				asm_add(assem, "cmp byte [r8], 0");
+				asm_addf(assem, ".jz%s%d:", name, i);
+				asm_add(assem, "cmp qword [r8], 0");
 				// get pair jump point
 				int jnz = get_matching_jnz(jump_pairs, i, jplen);
-				asm_addf(assem, "je .jnz%d", jnz);
+				asm_addf(assem, "je .jnz%s%d", name, jnz);
 				break;
 			}
 			case JUMP_NON_ZERO:
-				asm_addf(assem, ".jnz%d:", i);
-				asm_add(assem, "cmp byte [r8], 0");
+				asm_addf(assem, ".jnz%s%d:", name, i);
+				asm_add(assem, "cmp byte qword [r8], 0");
 				int jz = get_matching_jz(jump_pairs, i, jplen);
-				asm_addf(assem, "jne .jz%d", jz);
+				asm_addf(assem, "jne .jz%s%d", name, jz);
 				break;
 			case MODULE_POINTER_ADD:
-				mptr++;
+				asm_add(assem, "inc r9");
 			break;
 			case MODULE_POINTER_SUB:
-				mptr--;
+				asm_add(assem, "dec r9");
 				break;
 			case MODULE_RETREIVE:
-				// check mptr exists
-				if (mptr < 0 || mptr >= nyan.mice_len) {
-					printf("Error: module pointer out of bounds\n");
-					return -1;
-				}
-				// call function
-				asm_addf(assem, "call func_%d", get_matching_y(nyan.mice, nyan.mice_len, mptr));
-				// retrive return value
-				asm_add(assem, "mov r9, r8");
-				asm_addf(assem, "add r9, %d", ptr);
-				asm_add(assem, "mov byte [r9], al");
+				// find module in modules and call it
+				asm_add(assem, "mov rbx, modules");
+				asm_add(assem, "mov rax, qword [rbx+r9]");
+				asm_add(assem, "call rax");
+				// mov data in rax to data in r8
+				asm_add(assem, "mov qword [r8], rax");
+				// mov rax to r8
 				break;
 			case MODULE_RETURN: {
-				asm_add(assem, "mov r9, r8");
-				asm_addf(assem, "add r9, %d", ptr);
-				asm_add(assem, "mov al, byte [r9]");
+				// mov data in ptr to rax
+				asm_add(assem, "mov rax, qword [r8]");
+				// return
 				asm_add(assem, "pop r9");
 				asm_add(assem, "pop r8");
 				asm_add(assem, "ret");
